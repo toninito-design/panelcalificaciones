@@ -94,10 +94,12 @@
     ['dt','DT']
   ]);
   function canonicalSubject(subject) {
-    const name = key(subject).replace(/[^a-z0-9]+/g,' ').trim();
+    const name = key(subject.normalize('NFKD'))
+      .replace(/^(?:20)?\d{2}\s*[-–—/]\s*(?:20)?\d{2}\s*/, '')
+      .replace(/[^a-z0-9]+/g,' ').trim();
     if (/^(?:(?:english|ingles) )?(?:cambridge|spoken)(?: |$)/.test(name)) return 'Cambridge / Spoken';
     if (/^(?:english|ingles)(?: (?:grupo |group )?[a-z][0-9]{0,2})?$/.test(name)) return 'English';
-    if (/^matematicas (?:ccss|(?:aplic|aplicada|aplicadas) a las (?:c sociales|ciencias sociales|ccss)) ii$/.test(name)) return 'Matemáticas CCSS II';
+    if (/^matematicas (?:ccss|(?:aplic|aplicada|aplicadas) a las (?:c sociales|csociales|ciencias sociales|ccss)) ii$/.test(name)) return 'Matemáticas CCSS II';
     return subjectAliases.get(name) || subject;
   }
   const languageChoiceKey = (name,subject) => JSON.stringify([name,subject]);

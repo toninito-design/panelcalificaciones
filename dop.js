@@ -301,7 +301,7 @@ const dopDashboard = (() => {
       parent.append(tiles,element('p','Las medias se calculan a partir de las notas válidas. Los indicadores de alumnado abarcan todas sus materias.','muted'));
       mainCoverage(parent,loaded,referenceLoaded);
       const unresolved=scope.reduce((sum,record)=>sum+record.languageConflicts.filter(item=>!item.chosen).length,0);
-      if(unresolved)parent.append(element('p',unresolved+' calificaciones de idiomas están pendientes de revisión en los grupos de esta selección.','muted'));
+      if(unresolved)parent.append(element('p',unresolved+' calificaciones de materias unificadas están pendientes de revisión en los grupos de esta selección.','muted'));
       const body=element('div',undefined,'dop-detail');
       parent.append(body);
       if(!scope.length){body.append(element('p','No hay archivos para esta selección.'));return;}

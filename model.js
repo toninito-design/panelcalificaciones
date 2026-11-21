@@ -80,19 +80,33 @@
       students:[...item.students].map(([name,grades])=>({name,grades:Object.fromEntries(grades)}))
     }))};
   }
-  function languageSubject(subject) {
+  const subjectAliases = new Map([
+    ['historia de espana','Historia'],
+    ['historia','Historia'],
+    ['lengua castellana y literatura ii','Lengua'],
+    ['lengua','Lengua'],
+    ['lengua valenciana y literatura ii','Valencià'],
+    ['valencia','Valencià'],
+    ['historia de la filosofia','Filosofía'],
+    ['filosofia','Filosofía'],
+    ['dibujo tecnico ii','DT'],
+    ['ibujo tecnico ii','DT'],
+    ['dt','DT']
+  ]);
+  function canonicalSubject(subject) {
     const name = key(subject).replace(/[^a-z0-9]+/g,' ').trim();
     if (/^(?:(?:english|ingles) )?(?:cambridge|spoken)(?: |$)/.test(name)) return 'Cambridge / Spoken';
     if (/^(?:english|ingles)(?: (?:grupo |group )?[a-z][0-9]{0,2})?$/.test(name)) return 'English';
-    return subject;
+    if (/^matematicas (?:ccss|(?:aplic|aplicada|aplicadas) a las (?:c sociales|ciencias sociales|ccss)) ii$/.test(name)) return 'Matemáticas CCSS II';
+    return subjectAliases.get(name) || subject;
   }
   const languageChoiceKey = (name,subject) => JSON.stringify([name,subject]);
-  function consolidateLanguages(record) {
+  function consolidateSubjects(record) {
     const conflicts = [];
     const students=record.students.map(student=>{
       const subjects=new Map();
       for (const [source,value] of Object.entries(student.grades)) {
-        const subject=languageSubject(source);
+        const subject=canonicalSubject(source);
         if (!subjects.has(subject)) subjects.set(subject,[]);
         subjects.get(subject).push({source,value});
       }
@@ -108,7 +122,7 @@
       }
       return {...student,grades:Object.fromEntries(grades)};
     });
-    return {...record,subjects:[...new Set(record.subjects.map(languageSubject))],students,languageConflicts:conflicts};
+    return {...record,subjects:[...new Set(record.subjects.map(canonicalSubject))],students,languageConflicts:conflicts};
   }
   function statistics(grades) {
     const values=grades.filter(value=>typeof value==='number'&&Number.isFinite(value));
@@ -116,7 +130,7 @@
     const pass=values.filter(value=>value>=5).length;
     return {n,pass,fail:n-pass,mean:n?values.reduce((sum,value)=>sum+value,0)/n:null,rate:n?100*pass/n:null};
   }
-  const api={clean,key,periods,labels,grade,readWorkbook,statistics,consolidateLanguages};
+  const api={clean,key,periods,labels,grade,readWorkbook,statistics,consolidateSubjects};
   if(typeof module!=='undefined')module.exports=api;
   else root.Grades=api;
 })(globalThis);

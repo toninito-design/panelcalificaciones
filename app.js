@@ -1,5 +1,5 @@
 'use strict';
-const {clean,key,periods,labels,readWorkbook,statistics,consolidateLanguages} = Grades;
+const {clean,key,periods,labels,readWorkbook,statistics,consolidateSubjects} = Grades;
 const $ = id => document.getElementById(id);
 const fmt = new Intl.NumberFormat('es-ES',{maximumFractionDigits:2});
 const dbKey = 'panel-calificaciones-v1:'+location.pathname.replace(/(?:index\.html)?\/?$/,'/');
@@ -129,12 +129,12 @@ function refreshFilters() {
     $('subject-label').hidden=true;
     $('period-label').hidden=true;
     $('language-review').hidden=true;
-    dopDashboard(inYear.map(consolidateLanguages),$('year').value);
+    dopDashboard(inYear.map(consolidateSubjects),$('year').value);
     return;
   }
   const course=inYear.filter(record=>record.course===$('course').value);
   setOptions('group',[['','Todos los grupos'],...distinct(course.map(record=>record.group))]);
-  const records=course.filter(record=>!$('group').value||record.group===$('group').value).map(consolidateLanguages);
+  const records=course.filter(record=>!$('group').value||record.group===$('group').value).map(consolidateSubjects);
   showLanguageConflicts(records);
   setOptions('period',periods.filter(period=>records.some(record=>record.period===period)).map(period=>[period,labels[period]]));
   const current=records.filter(record=>record.period===$('period').value);
@@ -154,7 +154,7 @@ function showLanguageConflicts(records) {
   content.replaceChildren();
   if (!conflicts.length) return;
   const pending=conflicts.filter(item=>!item.chosen).length;
-  review.querySelector('summary').textContent='Revisar notas de English y Cambridge / Spoken · '+pending+' pendientes';
+  review.querySelector('summary').textContent='Revisar notas de materias unificadas · '+pending+' pendientes';
   content.append(element('p','Hay cuadernos de la misma materia con notas diferentes. Elige la nota que corresponde. Si dejas la revisión pendiente, esa materia queda sin nota en los cálculos.'));
   for (const {record,student,subject,entries,choiceKey,chosen} of conflicts) {
     const label=element('label',student+' · Grupo '+record.group+' · '+labels[record.period]+' · '+subject);

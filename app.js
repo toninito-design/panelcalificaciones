@@ -257,7 +257,7 @@ function showGradesTable(records) {
     button.setAttribute('aria-pressed',String(matrixSort===sort));
     if(matrixSort===sort)button.classList.add('primary');
     button.onclick=()=>{
-      matrixSort=sort;
+      matrixSort=matrixSort===sort?'':sort;
       showGradesTable(records);
       parent.querySelector('[data-matrix-sort="'+sort+'"]').focus();
     };

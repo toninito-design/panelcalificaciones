@@ -245,13 +245,186 @@ const dopDashboard = (() => {
     }
     doc.save('dop-resultados.pdf');
   }
-  const names={map:'Centro de un vistazo',subject:'Seguimiento por materia',groups:'Comparación de cursos y grupos'};
+  const transitions=[[1,2],[5,6],[7,8],[9,10],[10,11]].map(pair=>pair.map(index=>planned[index].course));
+  const comparisonTypes={
+    levels:'Entre niveles, mismo año',
+    cohort:'Misma promoción, dos años',
+    annual:'Mismo nivel, distintos años'
+  };
+  const historyChoice={type:'levels',transition:1,course:'',group:'',paired:false};
+  const shiftYear=(year,offset)=>{
+    const start=Number(year.slice(0,4))+offset;
+    return start+'–'+String(start+1).slice(-2);
+  };
+  function uniqueStudents(records) {
+    const byName=new Map();
+    for(const record of records)for(const student of record.students){
+      const name=key(student.name).replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+      if(name)byName.set(name,byName.has(name)?null:student);
+    }
+    return byName;
+  }
+  function historyView(parent,records,year,rerender) {
+    const controls=element('div',undefined,'filters');
+    const update=(field,value)=>{
+      historyChoice[field]=value;
+      if(['type','transition','course'].includes(field))historyChoice.group='';
+      rerender();
+    };
+    const select=(label,options,value,onchange)=>listOptions(controls,label,options,value,onchange);
+    const type=historyChoice.type;
+    select('Comparación',Object.entries(comparisonTypes),type,value=>update('type',value));
+    const annual=type==='annual',cohort=type==='cohort';
+    if(annual){
+      const courseOptions=planned.map(({course})=>[course,course]);
+      historyChoice.course=select('Nivel',courseOptions,historyChoice.course||transitions[historyChoice.transition][1],value=>update('course',value));
+    }
+    const [leftCourse,rightCourse]=annual?[historyChoice.course,historyChoice.course]:transitions[historyChoice.transition];
+    const leftYear=annual?shiftYear(year,-1):year, rightYear=cohort?shiftYear(year,1):year;
+    const scopes=[[leftCourse,leftYear],[rightCourse,rightYear]];
+    const all=scopes.map(([course,academicYear])=>records.filter(record=>record.course===course&&record.year===academicYear));
+    const termOptions=periods.map(period=>[period,labels[period]]);
+    choice.period=select('Evaluación',termOptions,choice.period||'FINAL',value=>{choice.period=value;rerender();});
+    const groups=distinct(all.flatMap(side=>side.map(record=>record.group)));
+    historyChoice.group=select('Grupo',['',...groups].map(group=>[group,group?'Grupo '+group:'Todos los grupos']),historyChoice.group,value=>update('group',value));
+    const scoped=all.map(side=>side.filter(record=>!historyChoice.group||record.group===historyChoice.group));
+    const sides=scoped.map(side=>forPeriod(side,choice.period));
+    const subjects=distinct(sides.flatMap(side=>side.flatMap(record=>record.subjects)));
+    const offered=distinct(scoped.flatMap(side=>side.flatMap(record=>record.subjects)));
+    const selected=select('Materia',['',...distinct([...offered,...(choice.subject?[choice.subject]:[])])].map(subject=>[subject,subject||'Todas las materias']),choice.subject,value=>{choice.subject=value;rerender();});
+    if(cohort){
+      const label=element('label','Alumnado');
+      const input=element('select');
+      input.append(new Option('Toda la promoción','all'),new Option('Presente en ambos años','paired'));
+      input.value=historyChoice.paired?'paired':'all';
+      input.onchange=()=>update('paired',input.value==='paired');
+      label.append(input);controls.append(label);
+    }
+    parent.append(controls);
+    if(!annual){
+      const buttons=element('div',undefined,'filters matrix-tabs');
+      buttons.setAttribute('role','group');
+      buttons.setAttribute('aria-label','Transiciones');
+      transitions.forEach(([from,to],index)=>{
+        const button=element('button',from+' a '+to);
+        button.type='button';
+        button.setAttribute('aria-pressed',String(index===historyChoice.transition));
+        if(index===historyChoice.transition)button.classList.add('primary');
+        button.onclick=()=>update('transition',index);
+        buttons.append(button);
+      });
+      parent.append(buttons);
+    }
+    const headings=scopes.map(([course,academicYear])=>course+' · '+academicYear);
+    const context=headings.join(' frente a ')+' · '+labels[choice.period]+(historyChoice.group?' · Grupo '+historyChoice.group:'');
+    const coverageNotes=sides.map((side,index)=>headings[index]+'. '+(side.length?formatCoverage(coverage(scoped[index],side)):'Falta el archivo de '+labels[choice.period]+' para esta selección.'));
+    parent.append(element('h3',context),...coverageNotes.map(note=>element('p',note,'muted')));
+    const students=cohort?sides.map(uniqueStudents):[];
+    const pairs=cohort?[...students[0]].filter(([name,student])=>student&&students[1].get(name)).map(([name,student])=>[student,students[1].get(name)]):[];
+    const paired=cohort&&historyChoice.paired;
+    if(cohort&&sides.every(side=>side.length)){
+      parent.append(element('p',pairs.length+' coincidencias únicas por nombre completo. Las coincidencias ambiguas quedan fuera del seguimiento individual.','muted'));
+    }
+    const displaySubjects=selected?[selected]:subjects;
+    const results=displaySubjects.map(subject=>{
+      const validPairs=pairs.filter(pair=>pair.every(student=>Number.isFinite(student.grades[subject])));
+      const stats=paired?[0,1].map(index=>statistics(validPairs.map(pair=>pair[index].grades[subject]))):sides.map(side=>itemStats(side,subject));
+      const [before,after]=stats;
+      const delta=before.n&&after.n?after.mean-before.mean:null;
+      return {subject,stats,delta,validPairs};
+    });
+    if(!results.length){parent.append(element('p','Las materias aparecerán al importar notas de esta evaluación.'));return;}
+    const signed=(number,suffix='')=>number===null?'—':(number>0?'+':'')+fmtValue(number)+suffix;
+    const headers=['Materia','Media inicial','Media posterior','Diferencia','Suspensos iniciales','Suspensos posteriores','Cambio de suspensos'];
+    const failSummary=stats=>stats.n?stats.fail+'/'+stats.n+' ('+format(failRate(stats),'fail')+')':'—';
+    function status(subject,index) {
+      if(!sides[index].length)return 'Archivo pendiente';
+      if(!sides[index].some(record=>record.subjects.includes(subject)))return 'Sin oferta registrada';
+      return paired?'Sin pares con nota':'Sin notas válidas';
+    }
+    const rows=results.map(({subject,stats:[before,after],delta})=>[
+      subject,before.n?fmtValue(before.mean):status(subject,0),after.n?fmtValue(after.mean):status(subject,1),signed(delta),
+      failSummary(before),failSummary(after),signed(delta===null?null:failRate(after)-failRate(before),' pp')
+    ]);
+    const chart=element('div',undefined,'dop-history-chart');
+    chart.append(element('h3','Medias por materia (0–10)'));
+    for(const {subject,stats} of results){
+      const figure=element('div',undefined,'dop-history-subject');
+      figure.append(element('strong',subject));
+      stats.forEach(({mean,n},index)=>{
+        const line=element('div',undefined,'dop-history-line');
+        line.append(element('span',headings[index]));
+        const track=element('div',undefined,'dop-history-track');
+        track.setAttribute('aria-hidden','true');
+        const bar=element('div',undefined,'dop-history-bar');
+        bar.dataset.series=String(index);
+        bar.style.width=(n?mean*10:0)+'%';
+        track.append(bar);
+        line.append(track,element('span',n?fmtValue(mean):status(subject,index)));
+        figure.append(line);
+      });
+      chart.append(figure);
+    }
+    parent.append(chart);
+    table(parent,'Detalle por materia',headers,rows);
+    const compared=results.filter(item=>item.delta!==null);
+    const notes=[];
+    if(compared.length){
+      for(const [label,getValue,suffix] of [
+        ['Mayor subida de media',item=>item.delta,' puntos'],
+        ['Mayor aumento de suspensos',({stats:[before,after]})=>failRate(after)-failRate(before),' pp']
+      ]){
+        const ranked=compared.map(item=>({subject:item.subject,value:getValue(item)})).sort((a,b)=>b.value-a.value);
+        if(ranked[0].value>=0.005)notes.push(label+' en '+ranked[0].subject+' ('+signed(ranked[0].value,suffix)+').');
+      }
+      const lowest=compared.slice().sort((a,b)=>a.delta-b.delta)[0];
+      if(lowest.delta<=-0.005)notes.push('Mayor descenso de media en '+lowest.subject+' ('+signed(lowest.delta,' puntos')+').');
+      if(!notes.length)notes.push('Las materias comparables mantienen su media y no aumentan el porcentaje de suspensos.');
+    }else notes.push('Aún faltan notas comparables para calcular diferencias.');
+    if(type==='cohort'&&!paired)notes.push('La vista de toda la promoción incluye las incorporaciones y salidas de alumnado de cada año.');
+    if(selected===''||key(selected).includes('taller')){
+      for(const [index,side] of sides.entries()){
+        if(!side.some(record=>record.subjects.some(subject=>key(subject).includes('taller de refuerzo'))))continue;
+        const options=['Deutsch','Français','Taller de refuerzo'];
+        const counts=options.map(subject=>subject+' '+itemStats(side,subject).n);
+        notes.push(headings[index]+' · Calificaciones de segunda lengua y refuerzo: '+counts.join(', ')+'.');
+      }
+    }
+    parent.append(element('h3','Lectura de resultados'),...notes.map(note=>element('p',note)));
+    if(cohort&&pairs.length){
+      const followup=element('details');
+      followup.append(element('summary','Seguimiento del alumnado presente en ambos años'));
+      const followupRows=[];
+      for(const {subject,validPairs} of results)for(const [before,after] of validPairs){
+        const first=before.grades[subject],last=after.grades[subject];
+        if(first>=5&&last>=5)continue;
+        const outcome=first>=5?'Pasa a insuficiente':last>=5?'Se recupera':'Mantiene insuficiente';
+        followupRows.push([before.name,subject,fmtValue(first),fmtValue(last),outcome]);
+      }
+      if(followupRows.length)table(followup,'Cambios respecto al aprobado',['Alumno/a','Materia','Inicial','Posterior','Resultado'],followupRows);
+      else followup.append(element('p','Sin suspensos en las notas emparejadas de esta selección.'));
+      if(sides[1].some(record=>record.subjects.includes('Taller de refuerzo'))){
+        const support=pairs.filter(([,after])=>Number.isFinite(after.grades['Taller de refuerzo']));
+        const progress=support.map(([before,after])=>[
+          before.name,['Deutsch','Français'].filter(subject=>Number.isFinite(before.grades[subject])).join(' / ')||'Sin nota registrada',
+          ...['Lengua Castellana y Literatura','Valencià','Matemáticas'].map(subject=>[before,after].map(student=>fmtValue(student.grades[subject]??null)).join(' → '))
+        ]);
+        if(progress.length)table(followup,'Seguimiento del Taller de refuerzo',['Alumno/a','Segunda lengua anterior','Lengua','Valencià','Matemáticas'],progress);
+      }
+      parent.append(followup);
+    }
+    const button=element('button','Descargar PDF de la selección','primary');
+    button.onclick=()=>run(()=>exportPdf({title:comparisonTypes[type],context,coverage:coverageNotes.join(' '),stats:{n:0},notes,headers,rows}));
+    parent.append(button);
+  }
+  const names={map:'Centro de un vistazo',subject:'Seguimiento por materia',groups:'Comparación de cursos y grupos',history:'Transiciones e histórico'};
   return function showDop(records,year) {
     const parent=$('content');
-    const normalized=records.map(record=>({...record,course:canonicalCourse(record.course)}));
+    const history=records.map(record=>({...record,course:canonicalCourse(record.course)}));
+    const normalized=history.filter(record=>record.year===year);
     function render(){
       parent.replaceChildren(element('h2','DOP'),element('p',year+' · Resultados académicos del centro','muted'));
-      if(!normalized.length){parent.append(element('p','Importa las evaluaciones de un año académico para consultar el centro.'));return;}
+      if(!history.length){parent.append(element('p','Importa las evaluaciones de un año académico para consultar el centro.'));return;}
       const update=(name,value)=>{
         choice[name]=value;
         if(name==='stage'){choice.course='';choice.group='';}
@@ -268,6 +441,7 @@ const dopDashboard = (() => {
         tabs.append(button);
       }
       parent.append(tabs);
+      if(choice.view==='history'){historyView(parent,history,year,render);return;}
       const controls=element('div',undefined,'filters');
       const options=(items,allLabel)=>[['',allLabel],...items.map(item=>[item,item])];
       const available=periods.filter(period=>forPeriod(normalized,period).length);

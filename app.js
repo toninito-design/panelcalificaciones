@@ -129,7 +129,7 @@ function refreshFilters() {
     $('subject-label').hidden=true;
     $('period-label').hidden=true;
     $('language-review').hidden=true;
-    dopDashboard(inYear.map(consolidateSubjects),$('year').value);
+    dopDashboard(state.records.map(consolidateSubjects),$('year').value);
     return;
   }
   const course=inYear.filter(record=>record.course===$('course').value);

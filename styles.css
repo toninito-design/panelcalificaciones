@@ -20,3 +20,10 @@
 .clear-imports{color:var(--main);border-color:var(--main)}
 
 .matrix-sort{margin:8px 0 12px}
+
+.dop-history-chart { margin-block: 1.25rem; }
+.dop-history-subject { padding-block: .65rem; border-bottom: 1px solid #eadce0; }
+.dop-history-line { display: grid; grid-template-columns: minmax(8rem, 15rem) minmax(3rem, 1fr) minmax(4rem, 9rem); gap: .6rem; align-items: center; margin-top: .35rem; font-size: .875rem; }
+.dop-history-track { background: #f4edf0; border-radius: .25rem; overflow: hidden; }
+.dop-history-bar { height: .7rem; background: #8f122c; }
+.dop-history-bar[data-series="1"] { background: #c68c0a; }

@@ -129,7 +129,7 @@ function refreshFilters() {
     $('subject-label').hidden=true;
     $('period-label').hidden=true;
     $('language-review').hidden=true;
-    dopDashboard(state.records.map(consolidateSubjects),$('year').value);
+    dopDashboard(state.records.map(consolidateSubjects),$('year').value,openDopStudent);
     return;
   }
   const course=inYear.filter(record=>record.course===$('course').value);
@@ -428,6 +428,19 @@ function showResults(records,current) {
   table(parent,'Detalle de la evaluación',columns,courses.map(rowOf));
   table(parent,'Comparación entre evaluaciones',columns,evolution.map(rowOf));
   printButton(heading,{title,context,sections:[{title:'Resultados de la evaluación',items:courses},{title:'Evolución por evaluación',items:evolution}],notes:reading});
+}
+function openDopStudent(record,name) {
+  const original={...record,course:record.originalCourse};
+  $('year').value=original.year;
+  const courses=state.records.filter(item=>item.year===original.year);
+  setOptions('course',distinct(courses.map(item=>item.course)));
+  $('course').value=original.course;
+  const records=courses.filter(item=>item.course===original.course);
+  setOptions('group',distinct(records.map(item=>item.group)));
+  $('group').value=original.group;
+  setOptions('period',[[original.period,labels[original.period]]]);
+  studentKey=studentId(original,name);
+  changeView('students');
 }
 function showStudents(records,current,focusDirection) {
   const parent=$('content');

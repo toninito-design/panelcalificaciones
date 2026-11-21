@@ -256,10 +256,11 @@ const dopDashboard = (() => {
     const start=Number(year.slice(0,4))+offset;
     return start+'–'+String(start+1).slice(-2);
   };
+  const normalizedStudentName=name=>key(name).replace(/[^\p{L}\p{N}]+/gu,' ').trim();
   function uniqueStudents(records) {
     const byName=new Map();
     for(const record of records)for(const student of record.students){
-      const name=key(student.name).replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+      const name=normalizedStudentName(student.name);
       if(name)byName.set(name,byName.has(name)?null:student);
     }
     return byName;
@@ -417,14 +418,201 @@ const dopDashboard = (() => {
     button.onclick=()=>run(()=>exportPdf({title:comparisonTypes[type],context,coverage:coverageNotes.join(' '),stats:{n:0},notes,headers,rows}));
     parent.append(button);
   }
-  const names={map:'Centro de un vistazo',subject:'Seguimiento por materia',groups:'Comparación de cursos y grupos',history:'Transiciones e histórico'};
-  return function showDop(records,year) {
+  const alarmKinds={student:'Alumno',group:'Grupo',level:'Nivel',stage:'Etapa',center:'Centro',transition:'Transición'};
+  const alarmFilters={kind:'',stage:'',course:'',group:'',subject:'',student:''};
+  const latestPeriod=records=>periods.filter(period=>forPeriod(records,period).length).at(-1);
+  const previousPeriod=period=>periods[periods.indexOf(period)-1];
+  const failedSubjects=student=>Object.keys(student.grades).filter(subject=>validGrade(student.grades[subject])&&student.grades[subject]<5);
+  const critical=stats=>stats.n>=10&&stats.fail>=4&&stats.fail*100>=40*stats.n;
+  const worsening=(now,then)=>now.n>=10&&then.n>=10&&now.fail*100>=30*now.n&&
+    100*(now.fail*then.n-then.fail*now.n)>=15*now.n*then.n;
+  const alarmRate=stats=>stats.fail+' de '+stats.n+' ('+format(failRate(stats),'fail')+')';
+  const byGroup=(a,b)=>key(a.group)===key(b.group);
+  const withNotes=(record,subject)=>record.students.some(student=>validGrade(student.grades[subject]));
+  function collectAlarms(history,year) {
+    const records=history.filter(record=>record.year===year);
+    const alerts=[];
+    for(const course of distinct(records.map(record=>record.course))){
+      const level=records.filter(record=>record.course===course);
+      const stage=stageOf(course);
+      const groups=distinct(level.map(record=>record.group));
+      const scopes=groups.map(group=>({group,records:level.filter(record=>record.group===group)}));
+      if(groups.length>1)scopes.push({group:'',records:level});
+      for(const {group,records:scope} of scopes){
+        const period=latestPeriod(scope);
+        const current=forPeriod(scope,period);
+        const earlier=forPeriod(scope,previousPeriod(period));
+        const kind=group?'group':'level';
+        const base={kind,course,stage,group,period};
+        const missing=coverage(scope,current).missing;
+        const annual=history.filter(record=>record.year===shiftYear(year,-1)&&record.course===course&&record.period===period&&(!group||record.group===group));
+        for(const subject of distinct(current.flatMap(record=>record.subjects))){
+          const now=itemStats(current,subject), then=itemStats(earlier,subject);
+          const reasons=[];
+          if(critical(now))reasons.push('Muchos suspensos: '+alarmRate(now)+'.');
+          const matchesCoverage=reference=>{
+            const active=current.filter(record=>withNotes(record,subject));
+            const prior=reference.filter(record=>withNotes(record,subject));
+            return active.length===prior.length&&active.every(record=>prior.some(other=>byGroup(record,other)));
+          };
+          const sameCoverage=matchesCoverage(earlier);
+          if(sameCoverage&&worsening(now,then))reasons.push('Sube de '+alarmRate(then)+' a '+alarmRate(now)+' desde '+labels[previousPeriod(period)]+'.');
+          const lastYear=itemStats(annual,subject);
+          if(matchesCoverage(annual)&&worsening(now,lastYear))reasons.push('Respecto al año anterior, sube de '+alarmRate(lastYear)+' a '+alarmRate(now)+'.');
+          const improving=sameCoverage&&critical(then)&&now.n>=10&&failRate(now)<failRate(then);
+          const resolved=!reasons.length&&improving;
+          if(resolved)reasons.push('Baja de '+alarmRate(then)+' a '+alarmRate(now)+' y sale del umbral de alarma.');
+          if(reasons.length)alerts.push({...base,subjects:[subject],reasons,missing,status:improving?'Mejora':critical(then)&&sameCoverage?'Persiste':'Nueva',inactive:resolved});
+        }
+        if(!group)continue;
+        const previous=uniqueStudents(earlier);
+        const currentStudents=uniqueStudents(current);
+        for(const record of current)for(const student of record.students){
+          const name=normalizedStudentName(student.name);
+          const old=currentStudents.get(name)?previous.get(name):null;
+          const failed=failedSubjects(student);
+          const persistent=old?failed.filter(subject=>old.grades[subject]<5):[];
+          const falls=old?failed.filter(subject=>old.grades[subject]>=5&&old.grades[subject]-student.grades[subject]>=2):[];
+          const reasons=[];
+          const subjects=new Set();
+          if(failed.length>=3){reasons.push(failed.length+' suspensos: '+failed.join(', ')+'.');failed.forEach(subject=>subjects.add(subject));}
+          if(persistent.length>=2){reasons.push('Repite suspenso en '+persistent.join(', ')+'.');persistent.forEach(subject=>subjects.add(subject));}
+          if(falls.length>=2){
+            reasons.push('Pasa a suspenso en '+falls.map(subject=>subject+' ('+fmtValue(old.grades[subject])+' → '+fmtValue(student.grades[subject])+')').join(', ')+'.');
+            falls.forEach(subject=>subjects.add(subject));
+          }
+          const comparableFailures=old?failedSubjects(old).filter(subject=>validGrade(student.grades[subject])):[];
+          const improved=!reasons.length&&comparableFailures.length>=3&&failed.length<3;
+          if(improved){reasons.push('Baja de '+comparableFailures.length+' a '+failed.length+' suspensos y sale del umbral de alarma.');comparableFailures.forEach(subject=>subjects.add(subject));}
+          if(reasons.length&&validGrade(student.grades['Taller de refuerzo'])){
+            const core=failed.filter(subject=>['Lengua Castellana y Literatura','Valencià','Matemáticas'].includes(subject));
+            reasons.push('Cursa Taller de refuerzo.'+(core.length?' Revisar el apoyo en '+core.join(', ')+'.':''));
+          }
+          if(reasons.length)alerts.push({...base,kind:'student',record,student:student.name,subjects:[...subjects],reasons,status:improved?'Mejora':persistent.length>=2||comparableFailures.length>=3?'Persiste':'Nueva',inactive:improved});
+        }
+      }
+    }
+    const groupAlerts=alerts.filter(item=>item.kind==='group'&&!item.inactive);
+    for(const subject of distinct(groupAlerts.flatMap(item=>item.subjects))){
+      for(const period of periods){
+        const related=groupAlerts.filter(item=>item.period===period&&item.subjects.includes(subject));
+        const affectedStages=distinct(related.map(item=>item.stage));
+        const addSummary=(kind,stage,children)=>{
+          const known=stage?records.filter(record=>stageOf(record.course)===stage):records;
+          alerts.push({kind,stage,period,subjects:[subject],children,missing:coverage(known,forPeriod(known,period)).missing,
+            status:children.every(item=>item.status==='Persiste')?'Persiste':children.every(item=>item.status==='Mejora')?'Mejora':'Nueva',
+            reasons:[children.length+' grupos en alerta: '+children.map(item=>item.course+' '+item.group).join(', ')+'.']});
+        };
+        for(const stage of affectedStages){
+          const children=related.filter(item=>item.stage===stage);
+          if(children.length>=2)addSummary('stage',stage,children);
+        }
+        if(affectedStages.length>=2)addSummary('center','',related);
+      }
+    }
+    for(const [index,[from,to]] of transitions.entries()){
+      const before=history.filter(record=>record.year===shiftYear(year,-1)&&record.course===from);
+      const after=records.filter(record=>record.course===to);
+      const period=latestPeriod(after);
+      if(!period)continue;
+      const first=forPeriod(before,period),second=forPeriod(after,period);
+      const left=uniqueStudents(first),right=uniqueStudents(second);
+      const pairs=[...left].filter(([name,student])=>student&&right.get(name)).map(([name,student])=>[student,right.get(name)]);
+      const missing=[...coverage(before,first).missing,...coverage(after,second).missing];
+      for(const subject of distinct(second.flatMap(record=>record.subjects))){
+        const comparable=pairs.filter(pair=>pair.every(student=>validGrade(student.grades[subject])));
+        const fallen=comparable.filter(([a,b])=>a.grades[subject]>=5&&b.grades[subject]<5);
+        if(comparable.length>=10&&fallen.length>=4&&4*fallen.length>=comparable.length){
+          alerts.push({kind:'transition',course:to,from,stage:stageOf(to),period,subjects:[subject],status:'Nueva',transition:index,missing,
+            reasons:[fallen.length+' de '+comparable.length+' ('+format(100*fallen.length/comparable.length,'fail')+') pasan de aprobado a suspenso.']});
+        }
+      }
+    }
+    return alerts;
+  }
+  function alarmView(parent,alerts,records,year,rerender,openStudent) {
+    parent.append(element('h3','Alarmas rojas'),element('p','Prioridades calculadas con la última evaluación disponible de cada grupo o nivel. Selecciona el año académico arriba.','muted'));
+    const controls=element('div',undefined,'filters');
+    const filter=(name,label,items,allLabel)=>{
+      alarmFilters[name]=listOptions(controls,label,[['',allLabel],...items],alarmFilters[name],value=>{
+        alarmFilters[name]=value;
+        if(name==='stage'){alarmFilters.course='';alarmFilters.group='';}
+        if(name==='course')alarmFilters.group='';
+        rerender();
+      });
+    };
+    const options=items=>distinct(items.filter(Boolean)).map(item=>[item,item]);
+    filter('kind','Tipo',Object.entries(alarmKinds),'Todos los tipos');
+    filter('stage','Etapa',options(records.map(record=>stageOf(record.course))),'Todas las etapas');
+    const inStage=records.filter(record=>!alarmFilters.stage||stageOf(record.course)===alarmFilters.stage);
+    filter('course','Nivel',options(inStage.map(record=>record.course)),'Todos los niveles');
+    const inCourse=inStage.filter(record=>!alarmFilters.course||record.course===alarmFilters.course);
+    filter('group','Grupo',options(inCourse.map(record=>record.group)),'Todos los grupos');
+    filter('subject','Materia',options(alerts.flatMap(item=>item.subjects)),'Todas las materias');
+    filter('student','Alumno/a',options(alerts.map(item=>item.student)),'Todo el alumnado');
+    parent.append(controls);
+    const matches=(item)=>{
+      const scope=item.children||[item];
+      return (!alarmFilters.kind||item.kind===alarmFilters.kind)&&(!alarmFilters.subject||item.subjects.includes(alarmFilters.subject))&&
+        (!alarmFilters.student||item.student===alarmFilters.student)&&scope.some(part=>
+          (!alarmFilters.stage||part.stage===alarmFilters.stage)&&(!alarmFilters.course||part.course===alarmFilters.course||part.from===alarmFilters.course)&&
+          (!alarmFilters.group||!part.group||part.group===alarmFilters.group));
+    };
+    const openDetail=item=>{
+      if(item.student){openStudent(item.record,item.student);return;}
+      choice.period=item.period;
+      choice.subject=item.subjects[0];
+      if(item.kind==='transition'){
+        historyChoice.type='cohort';historyChoice.transition=item.transition;historyChoice.paired=true;historyChoice.group='';
+        $('year').value=shiftYear(year,-1);
+        choice.view='history';refreshFilters();return;
+      }
+      choice.stage=item.stage;choice.course=item.course||'';choice.group=item.group||'';
+      choice.view='subject';rerender();
+    };
+    const selected=alerts.filter(matches);
+    const grouped=new Set(selected.filter(item=>!item.inactive).flatMap(item=>item.children||[]));
+    const summarized=selected.filter(item=>!item.inactive&&!grouped.has(item)&&!(item.kind==='stage'&&!alarmFilters.stage&&selected.some(parent=>parent.kind==='center'&&parent.period===item.period&&parent.subjects[0]===item.subjects[0])));
+    const list=element('ul',undefined,'dop-alarms');
+    function addItem(container,item) {
+      const line=element('li',undefined,'dop-alarm');
+      const titles=[alarmKinds[item.kind],item.student||item.subjects[0],item.from?item.from+' a '+item.course:item.course||item.stage,
+        item.group?'Grupo '+item.group:'',labels[item.period]].filter(Boolean);
+      line.append(element('strong',titles.join(' · ')),element('span',item.status+(item.missing?.length?' · Provisional':''),'dop-alarm-status'),
+        element('p',item.reasons.join(' ')));
+      if(item.missing?.length)line.append(element('p','Grupos pendientes: '+item.missing.join(', ')+'.','muted'));
+      if(item.children){
+        const childList=element('ul',undefined,'dop-alarms');
+        const details=element('details');
+        details.append(element('summary','Ver grupos afectados'),childList);
+        for(const child of item.children)addItem(childList,child);
+        line.append(details);
+      }else{
+        const button=element('button',item.student?'Ver evolución':item.kind==='transition'?'Ver promoción':'Ver materia');
+        button.type='button';button.onclick=()=>openDetail(item);line.append(button);
+      }
+      container.append(line);
+    }
+    for(const item of summarized)addItem(list,item);
+    parent.append(summarized.length?list:element('p','No hay alarmas rojas activas para esta selección.'));
+    const improving=selected.filter(item=>item.inactive);
+    if(improving.length){
+      const details=element('details'), resolved=element('ul',undefined,'dop-alarms');
+      details.append(element('summary','Mejoras recientes ('+improving.length+')'),resolved);
+      for(const item of improving)addItem(resolved,item);
+      parent.append(details);
+    }
+  }
+  const names={map:'Centro de un vistazo',subject:'Seguimiento por materia',groups:'Comparación de cursos y grupos',history:'Transiciones e histórico',alarms:'Alarmas rojas'};
+  return function showDop(records,year,openStudent) {
     const parent=$('content');
-    const history=records.map(record=>({...record,course:canonicalCourse(record.course)}));
+    const history=records.map(record=>({...record,originalCourse:record.course,course:canonicalCourse(record.course)}));
     const normalized=history.filter(record=>record.year===year);
+    const alarms=collectAlarms(history,year);
+    const activeCount=alarms.filter(item=>!item.inactive&&!item.children).length;
     function render(){
       parent.replaceChildren(element('h2','DOP'),element('p',year+' · Resultados académicos del centro','muted'));
-      if(!history.length){parent.append(element('p','Importa las evaluaciones de un año académico para consultar el centro.'));return;}
+
       const update=(name,value)=>{
         choice[name]=value;
         if(name==='stage'){choice.course='';choice.group='';}
@@ -434,13 +622,15 @@ const dopDashboard = (() => {
       const tabs=element('div',undefined,'filters matrix-tabs');
       tabs.setAttribute('role','group');tabs.setAttribute('aria-label','Vistas DOP');
       for(const [id,label] of Object.entries(names)){
-        const button=element('button',label);
+        const button=element('button',id==='alarms'?label+' ('+activeCount+')':label,id==='alarms'?'dop-alarm-tab':undefined);
         button.setAttribute('aria-pressed',String(choice.view===id));
         if(choice.view===id)button.classList.add('primary');
         button.onclick=()=>update('view',id);
         tabs.append(button);
       }
       parent.append(tabs);
+      if(choice.view==='alarms'){alarmView(parent,alarms,normalized,year,render,openStudent);return;}
+      if(!history.length){parent.append(element('p','Importa las evaluaciones de un año académico para consultar el centro.'));return;}
       if(choice.view==='history'){historyView(parent,history,year,render);return;}
       const controls=element('div',undefined,'filters');
       const options=(items,allLabel)=>[['',allLabel],...items.map(item=>[item,item])];

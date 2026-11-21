@@ -180,7 +180,12 @@ function showLanguageConflicts(records) {
   }
 }
 let matrixPeriod, matrixSortPeriod;
-let matrixSortDirection=0;
+let matrixSort='';
+const matrixSorts = {
+  'mean-asc': {metric:'mean',direction:1,label:'Media de menor a mayor'},
+  'mean-desc': {metric:'mean',direction:-1,label:'Media de mayor a menor'},
+  'fail-asc': {metric:'fail',direction:1,label:'Suspensos de menor a mayor'}
+};
 const matrixPeriods = {'1EV':'1.ª','2EV':'2.ª','3EV':'3.ª',FINAL:'Final'};
 function matrixData(records, selectedPeriods) {
   const rows = new Map();
@@ -231,7 +236,7 @@ function showGradesTable(records) {
   const orderPeriod=combined?matrixSortPeriod:matrixPeriod;
   const controls=element('div',undefined,'filters matrix-sort');
   controls.setAttribute('role','group');
-  controls.setAttribute('aria-label','Ordenar por nota media');
+  controls.setAttribute('aria-label','Ordenar la tabla de notas');
   if(combined) {
     const label=element('label','Evaluación para ordenar');
     const select=element('select');
@@ -246,15 +251,15 @@ function showGradesTable(records) {
     label.append(select);
     controls.append(label);
   }
-  for(const [direction,label] of [[1,'Media de menor a mayor'],[-1,'Media de mayor a menor']]) {
+  for(const [sort,{label}] of Object.entries(matrixSorts)) {
     const button=element('button',label);
-    button.dataset.matrixSort=direction;
-    button.setAttribute('aria-pressed',String(matrixSortDirection===direction));
-    if(matrixSortDirection===direction)button.classList.add('primary');
+    button.dataset.matrixSort=sort;
+    button.setAttribute('aria-pressed',String(matrixSort===sort));
+    if(matrixSort===sort)button.classList.add('primary');
     button.onclick=()=>{
-      matrixSortDirection=direction;
+      matrixSort=sort;
       showGradesTable(records);
-      parent.querySelector('[data-matrix-sort="'+direction+'"]').focus();
+      parent.querySelector('[data-matrix-sort="'+sort+'"]').focus();
     };
     controls.append(button);
   }
@@ -262,16 +267,17 @@ function showGradesTable(records) {
   const pupilStats=new Map(rows.map(row=>[row,new Map(selected.map(period=>[
     period,statistics(Object.values(row.terms.get(period)||{}))
   ]))]));
-  if(matrixSortDirection) {
+  const ordering=matrixSorts[matrixSort];
+  if(ordering) {
     rows.sort((a,b)=>{
-      const left=pupilStats.get(a).get(orderPeriod).mean;
-      const right=pupilStats.get(b).get(orderPeriod).mean;
-      if(left===null)return right===null?0:1;
-      if(right===null)return -1;
-      return (left-right)*matrixSortDirection;
+      const left=pupilStats.get(a).get(orderPeriod);
+      const right=pupilStats.get(b).get(orderPeriod);
+      if(!left.n)return right.n?1:0;
+      if(!right.n)return -1;
+      return (left[ordering.metric]-right[ordering.metric])*ordering.direction;
     });
   }
-  const ariaSort=matrixSortDirection===1?'ascending':'descending';
+  const ariaSort=ordering?.direction===1?'ascending':'descending';
   const groups=[
     {label:'Suspensos',metric:'fail'},
     {label:'Media',metric:'mean'},
@@ -289,13 +295,13 @@ function showGradesTable(records) {
   for (const group of groups) {
     const label=element('th',group.label,'matrix-start');
     label.scope=combined?'colgroup':'col';
-    if(!combined&&group.metric==='mean'&&matrixSortDirection)label.setAttribute('aria-sort',ariaSort);
+    if(!combined&&ordering&&group.metric===ordering.metric)label.setAttribute('aria-sort',ariaSort);
     label.colSpan=selected.length;
     first.append(label);
     selected.forEach((period,i)=>{
       const cell=element('th',matrixPeriods[period],i===0?'matrix-start':'');
       cell.scope='col';
-      if(combined&&group.metric==='mean'&&period===orderPeriod&&matrixSortDirection)cell.setAttribute('aria-sort',ariaSort);
+      if(combined&&ordering&&group.metric===ordering.metric&&period===orderPeriod)cell.setAttribute('aria-sort',ariaSort);
       second.append(cell);
     });
   }
@@ -527,7 +533,7 @@ function clearImportedGrades() {
   activeActaPeriod=undefined;
   matrixPeriod=undefined;
   matrixSortPeriod=undefined;
-  matrixSortDirection=0;
+  matrixSort='';
   $('file').value='';
   $('review').hidden=true;
   $('content').replaceChildren();

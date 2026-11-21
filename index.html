@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Panel local de calificaciones por materia, curso, grupo y evaluación.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Panel de calificaciones</title><link rel="stylesheet" href="./styles.css">
+<script defer src="./xlsx.js"></script><script defer src="./pdf.js"></script><script defer src="./model.js"></script><script defer src="./fflate.js"></script><script defer src="./acta-model.js"></script><script defer src="./acta-export.js"></script><script defer src="./charts.js"></script><script defer src="./dop.js"></script><script defer src="./app.js"></script>
+</head>
+<body>
+<header><div class="shell brand-header"><img src="./julio-verne-school.png" width="69" height="84" alt="Julio Verne School"><div><h1>Panel de calificaciones</h1><p>Resultados por materia, curso y evaluación</p></div></div></header>
+<main class="shell">
+<nav aria-label="Secciones"><button data-view="results" aria-current="page">Resultados</button><button data-view="acta">Acta de evaluación</button><button data-view="students">Alumnado</button><button data-view="grades">Tabla de notas</button><button data-view="charts">Gráficas</button><button data-view="dop">DOP</button><button data-view="import">Importar y guardar</button></nav>
+<p id="status" role="status"></p>
+<section id="import" hidden>
+<h2>Importar calificaciones</h2><p>Selecciona el informe de evaluación exportado en Excel. El archivo se procesa en este navegador.</p>
+<label>Archivo de calificaciones<input id="file" type="file" accept=".xls,.xlsx,.csv"></label>
+<div id="review" hidden><h3>Revisar importación</h3><p id="review-info"></p>
+<div class="filters" id="review-fields"></div><button id="save" class="primary">Guardar en el histórico</button></div>
+<h3>Histórico de evaluaciones</h3><ul id="history"></ul>
+<div class="filters"><button id="export">Descargar copia del histórico</button><label>Restaurar copia<input id="restore" type="file" accept=".json"></label><button id="clear-imports" type="button" class="clear-imports" disabled>Empezar desde cero</button><a href="./panel-calificaciones-codigo.zip" download>Descargar código de la web</a></div>
+</section>
+<section id="dashboard">
+<div class="filters">
+<label>Año académico<select id="year"></select></label><label id="course-label">Curso<select id="course"></select></label><label id="group-label">Grupo<select id="group"></select></label><label id="period-label">Evaluación<select id="period"></select></label><label id="subject-label">Materia<select id="subject"></select></label>
+</div>
+<details id="language-review" hidden><summary>Revisar notas de English y Cambridge / Spoken</summary><div id="language-conflicts"></div></details>
+<div id="content"></div>
+</section>
+</main>
+</body></html>

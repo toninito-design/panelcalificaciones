@@ -184,7 +184,8 @@ let matrixSort='';
 const matrixSorts = {
   'mean-asc': {metric:'mean',direction:1,label:'Media de menor a mayor'},
   'mean-desc': {metric:'mean',direction:-1,label:'Media de mayor a menor'},
-  'fail-asc': {metric:'fail',direction:1,label:'Suspensos de menor a mayor'}
+  'fail-asc': {metric:'fail',direction:1,label:'Suspensos de menor a mayor'},
+  'fail-desc': {metric:'fail',direction:-1,label:'Suspensos de mayor a menor'}
 };
 const matrixPeriods = {'1EV':'1.ª','2EV':'2.ª','3EV':'3.ª',FINAL:'Final'};
 function matrixData(records, selectedPeriods) {

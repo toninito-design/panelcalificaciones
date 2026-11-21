@@ -179,7 +179,8 @@ function showLanguageConflicts(records) {
     content.append(label);
   }
 }
-let matrixPeriod;
+let matrixPeriod, matrixSortPeriod;
+let matrixSortDirection=0;
 const matrixPeriods = {'1EV':'1.ª','2EV':'2.ª','3EV':'3.ª',FINAL:'Final'};
 function matrixData(records, selectedPeriods) {
   const rows = new Map();
@@ -225,6 +226,52 @@ function showGradesTable(records) {
     parent.append(element('p','No se han importado calificaciones para '+labels[matrixPeriod]+' en este curso y grupo.'));
     return;
   }
+  const availablePeriods=selected.filter(period=>records.some(record=>record.period===period));
+  if(combined && !availablePeriods.includes(matrixSortPeriod)) matrixSortPeriod=availablePeriods.at(-1);
+  const orderPeriod=combined?matrixSortPeriod:matrixPeriod;
+  const controls=element('div',undefined,'filters matrix-sort');
+  controls.setAttribute('role','group');
+  controls.setAttribute('aria-label','Ordenar por nota media');
+  if(combined) {
+    const label=element('label','Evaluación para ordenar');
+    const select=element('select');
+    select.id='matrix-sort-period';
+    for(const period of availablePeriods)select.append(new Option(labels[period],period));
+    select.value=matrixSortPeriod;
+    select.onchange=()=>{
+      matrixSortPeriod=select.value;
+      showGradesTable(records);
+      $('matrix-sort-period').focus();
+    };
+    label.append(select);
+    controls.append(label);
+  }
+  for(const [direction,label] of [[1,'Media de menor a mayor'],[-1,'Media de mayor a menor']]) {
+    const button=element('button',label);
+    button.dataset.matrixSort=direction;
+    button.setAttribute('aria-pressed',String(matrixSortDirection===direction));
+    if(matrixSortDirection===direction)button.classList.add('primary');
+    button.onclick=()=>{
+      matrixSortDirection=direction;
+      showGradesTable(records);
+      parent.querySelector('[data-matrix-sort="'+direction+'"]').focus();
+    };
+    controls.append(button);
+  }
+  parent.append(controls);
+  const pupilStats=new Map(rows.map(row=>[row,new Map(selected.map(period=>[
+    period,statistics(Object.values(row.terms.get(period)||{}))
+  ]))]));
+  if(matrixSortDirection) {
+    rows.sort((a,b)=>{
+      const left=pupilStats.get(a).get(orderPeriod).mean;
+      const right=pupilStats.get(b).get(orderPeriod).mean;
+      if(left===null)return right===null?0:1;
+      if(right===null)return -1;
+      return (left-right)*matrixSortDirection;
+    });
+  }
+  const ariaSort=matrixSortDirection===1?'ascending':'descending';
   const groups=[
     {label:'Suspensos',metric:'fail'},
     {label:'Media',metric:'mean'},
@@ -242,11 +289,13 @@ function showGradesTable(records) {
   for (const group of groups) {
     const label=element('th',group.label,'matrix-start');
     label.scope=combined?'colgroup':'col';
+    if(!combined&&group.metric==='mean'&&matrixSortDirection)label.setAttribute('aria-sort',ariaSort);
     label.colSpan=selected.length;
     first.append(label);
     selected.forEach((period,i)=>{
       const cell=element('th',matrixPeriods[period],i===0?'matrix-start':'');
       cell.scope='col';
+      if(combined&&group.metric==='mean'&&period===orderPeriod&&matrixSortDirection)cell.setAttribute('aria-sort',ariaSort);
       second.append(cell);
     });
   }
@@ -263,9 +312,8 @@ function showGradesTable(records) {
     const label=element('th',row.name);label.scope='row';
     if (!$('group').value) label.append(element('small','Grupo '+row.group,'muted'));
     tr.append(label);
-    const pupilStats=new Map(selected.map(period=>[period,statistics(Object.values(row.terms.get(period)||{}))]));
     for (const group of groups) selected.forEach((period,i)=>{
-      const stats=pupilStats.get(period);
+      const stats=pupilStats.get(row).get(period);
       const value=group.metric ? (stats.n?stats[group.metric]:null) : row.terms.get(period)?.[group.subject]??null;
       const cell=element('td',fmtValue(value),i===0?'matrix-start':'');
       if (group.subject!==undefined && value!==null && value<5) cell.classList.add('grade-insufficient');
@@ -478,6 +526,8 @@ function clearImportedGrades() {
   activeReport=undefined;
   activeActaPeriod=undefined;
   matrixPeriod=undefined;
+  matrixSortPeriod=undefined;
+  matrixSortDirection=0;
   $('file').value='';
   $('review').hidden=true;
   $('content').replaceChildren();

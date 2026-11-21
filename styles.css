@@ -18,3 +18,5 @@
 .dop-coverage{margin:10px 0 16px;border:1px solid var(--line);border-radius:8px;padding:4px 10px}.dop-detail{margin:15px 0}.dop-map td{min-width:95px}.dop-map .dop-cell{background:transparent;border-color:transparent;padding:3px 7px;color:var(--main);font-weight:700}.dop-map .dop-cell:hover{text-decoration:underline}.dop-map td small{font-size:.75rem}.dop-map td span.muted{font-size:.75rem}.dop-detail>.scroll table:not(.dop-map) td{white-space:nowrap}
 
 .clear-imports{color:var(--main);border-color:var(--main)}
+
+.matrix-sort{margin:8px 0 12px}

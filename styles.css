@@ -44,3 +44,11 @@
 
 .dop-means-chart { margin-block: .6rem 1rem; border: 1px solid var(--line); border-radius: 8px; }
 .dop-means-chart canvas { display: block; width: 100%; min-width: 640px; height: auto; }
+
+.grade-change-dialog { width: min(38rem, calc(100% - 2rem)); max-height: calc(100% - 2rem); padding: 1.25rem; border: 1px solid var(--line); border-radius: 10px; color: inherit; }
+.grade-change-dialog::backdrop { background: #23171b85; }
+.grade-change-fields { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%, 13rem),1fr)); gap: .65rem 1rem; }
+.grade-change-fields label { display: grid; gap: .25rem; }
+.grade-change-fields input, .grade-change-fields select { width: 100%; min-width: 0; }
+.grade-change-consent { display: flex; align-items: flex-start; gap: .5rem; }
+.grade-change-consent input { flex: 0 0 auto; margin-top: .25rem; }

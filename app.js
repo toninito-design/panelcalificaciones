@@ -30,15 +30,19 @@ function setOptions(id,items) {
 }
 function validState(value) {
   const validActas=value?.actas===undefined || (value.actas && typeof value.actas==='object' && Object.values(value.actas).every(note=>note&&typeof note==='object'&&Object.values(note).every(text=>typeof text==='string')));
-  return validActas && value && value.version===1 && Array.isArray(value.records) && value.notes && typeof value.notes==='object' &&
+  const changes=value?.gradeChanges;
+  const validChanges=changes===undefined||Array.isArray(changes)&&changes.every(change=>change&&
+    ['id','record','student','subject','at'].every(field=>typeof change[field]==='string'&&change[field])&&
+    Number.isFinite(Date.parse(change.at))&&['prior','value','original'].every(field=>validGrade(change[field])));
+  return validActas && validChanges && value && value.version===1 && Array.isArray(value.records) && value.notes && typeof value.notes==='object' &&
     Object.values(value.notes).every(note=>typeof note==='string') && value.records.every(record=>
       record && ['year','course','group'].every(property=>typeof record[property]==='string'&&record[property]) &&
       periods.includes(record.period) && (record.languageChoices===undefined || (record.languageChoices && typeof record.languageChoices==='object' && Object.values(record.languageChoices).every(value=>typeof value==='string'))) && Array.isArray(record.subjects) && record.subjects.every(subject=>typeof subject==='string') &&
       Array.isArray(record.students) && record.students.every(student=>student&&typeof student.name==='string'&&student.grades&&
         typeof student.grades==='object'&&Object.values(student.grades).every(validGrade)));
 }
-function persist(records,notes,actas=state.actas||{}) {
-  const next={version:1,records,notes,actas};
+function persist(records,notes,actas=state.actas||{},gradeChanges=state.gradeChanges||[]) {
+  const next={version:1,records,notes,actas,gradeChanges};
   localStorage.setItem(dbKey,JSON.stringify(next));
   state=next;
 }
@@ -129,12 +133,12 @@ function refreshFilters() {
     $('subject-label').hidden=true;
     $('period-label').hidden=true;
     $('language-review').hidden=true;
-    dopDashboard(state.records.map(consolidateSubjects),$('year').value,openDopStudent);
+    dopDashboard(state.records.map(effectiveRecord),$('year').value,openDopStudent);
     return;
   }
   const course=inYear.filter(record=>record.course===$('course').value);
   setOptions('group',[['','Todos los grupos'],...distinct(course.map(record=>record.group))]);
-  const records=course.filter(record=>!$('group').value||record.group===$('group').value).map(consolidateSubjects);
+  const records=course.filter(record=>!$('group').value||record.group===$('group').value).map(effectiveRecord);
   showLanguageConflicts(records);
   setOptions('period',periods.filter(period=>records.some(record=>record.period===period)).map(period=>[period,labels[period]]));
   const current=records.filter(record=>record.period===$('period').value);
@@ -542,7 +546,7 @@ function downloadPdf(report) {
 }
 function clearImportedGrades() {
   if(!state.records.length)return;
-  if(!window.confirm('¿Borrar todas las evaluaciones importadas en este navegador? Puedes usar «Descargar copia del histórico» antes de borrar. Las observaciones y los textos de las actas se conservarán.'))return;
+  if(!window.confirm('¿Borrar todas las evaluaciones importadas en este navegador? Puedes usar «Descargar copia del histórico» antes de borrar. Las observaciones, los textos de las actas y los acuerdos sobre cambios de nota se conservarán.'))return;
   persist([],state.notes);
   draft=undefined;
   studentKey='';
@@ -558,7 +562,7 @@ function clearImportedGrades() {
   message('Se han borrado las evaluaciones importadas. Ya puedes cargar las del nuevo curso.');
 }
 function downloadBackup() {
-  if(!state.records.length&&!Object.keys(state.notes).length&&!Object.keys(state.actas||{}).length)throw Error('No hay datos guardados.');
+  if(!state.records.length&&!Object.keys(state.notes).length&&!Object.keys(state.actas||{}).length&&!state.gradeChanges?.length)throw Error('No hay datos guardados.');
   const blob=new Blob([JSON.stringify(state)],{type:'application/json'});
   const url=URL.createObjectURL(blob);
   const link=element('a');
@@ -578,11 +582,156 @@ async function restore(event) {
     if(present.has(id)) return false;
     present.add(id);return true;
   });
-  persist([...state.records,...newRecords],{...backup.notes,...state.notes},{...backup.actas,...state.actas});
+  const changes=new Map([...(backup.gradeChanges||[]),...(state.gradeChanges||[])].map(change=>[change.id,change]));
+  const history=[...changes.values()].sort((a,b)=>a.at.localeCompare(b.at));
+  persist([...state.records,...newRecords],{...backup.notes,...state.notes},{...backup.actas,...state.actas},history);
   input.value='';showHistory();
   message(newRecords.length+' evaluaciones añadidas al histórico.');
 }
 const actaDraftKey = (year,course,group,period) => JSON.stringify([year,key(course),key(group),period]);
+function evaluationChanges(record) {
+  const id=recordKey(record);
+  return (state.gradeChanges||[]).filter(change=>change.record===id&&record.subjects.includes(change.subject)&&
+    record.students.filter(student=>student.name===change.student).length===1);
+}
+function effectiveRecord(raw) {
+  const record=consolidateSubjects(raw);
+  const updates=new Map();
+  for(const change of evaluationChanges(record)){
+    if(!updates.has(change.student))updates.set(change.student,new Map());
+    updates.get(change.student).set(change.subject,change.value);
+  }
+  if(!updates.size)return record;
+  return {...record,students:record.students.map(student=>{
+    const grades=updates.get(student.name);
+    return grades?{...student,grades:{...student.grades,...Object.fromEntries(grades)}}:student;
+  }),languageConflicts:record.languageConflicts.filter(item=>!updates.get(item.student)?.has(item.subject))};
+}
+function gradeChangeLine(change,course,group,period) {
+  const date=new Intl.DateTimeFormat('es-ES',{dateStyle:'short',timeZone:'Europe/Madrid'}).format(new Date(change.at));
+  return date+' · El equipo docente de etapa acordó por mayoría, con el consentimiento del docente de la materia, modificar la calificación de '+change.student+' en '+change.subject+' de '+fmtValue(change.prior)+' a '+fmtValue(change.value)+' en '+labels[period]+' de '+course+' (grupo '+group+').';
+}
+function openGradeChange(year,course,group,period,trigger) {
+  const available=state.records.filter(record=>record.year===year).map(effectiveRecord);
+  const dialog=element('dialog',undefined,'grade-change-dialog');
+  dialog.setAttribute('aria-labelledby','grade-change-title');
+  const title=element('h3','Cambios de nota');
+  title.id='grade-change-title';
+  const form=element('form');
+  const fields=element('div',undefined,'grade-change-fields');
+  function field(label,input){
+    const wrapper=element('label',label);
+    wrapper.append(input);fields.append(wrapper);return input;
+  }
+  function select(label){
+    const input=field(label,element('select'));
+    input.required=true;
+    return input;
+  }
+  const courseSelect=select('Curso');
+  const groupSelect=select('Grupo');
+  const periodSelect=select('Evaluación');
+  const pupilSearch=field('Buscar por apellido o nombre',element('input'));
+  const pupilSelect=select('Alumno o alumna');
+  const subjectSearch=field('Buscar materia',element('input'));
+  const subjectSelect=select('Materia');
+  const grade=field('Nueva nota (0–10)',element('input'));
+  grade.type='text';grade.inputMode='decimal';grade.required=true;
+  const current=element('p','Selecciona un alumno y una materia.');
+  current.setAttribute('aria-live','polite');
+  const agreement=element('input');
+  agreement.type='checkbox';agreement.required=true;
+  const confirmation=element('label',undefined,'grade-change-consent');
+  confirmation.append(agreement,'Confirmo el acuerdo por mayoría del equipo docente de etapa y el consentimiento del docente de la materia.');
+  const feedback=element('p',undefined,'error');
+  feedback.setAttribute('role','alert');
+  const actions=element('div',undefined,'filters');
+  const cancel=element('button','Cancelar');
+  cancel.type='button';cancel.onclick=()=>dialog.close();
+  const save=element('button','Guardar cambio','primary');
+  save.type='submit';
+  actions.append(cancel,save);
+  form.append(fields,current,confirmation,feedback,actions);
+  dialog.append(title,element('p','Año académico '+year,'muted'),form);
+  function options(input,values,preferred,placeholder){
+    input.replaceChildren(...(placeholder?[new Option(placeholder,'')]:[]),...values.map(value=>new Option(input===periodSelect?labels[value]:value,value)));
+    if(values.includes(preferred))input.value=preferred;
+    else if(placeholder&&input!==periodSelect&&values.length===1)input.value=values[0];
+  }
+  const courseRecords=()=>available.filter(record=>record.course===courseSelect.value);
+  const groupRecords=()=>courseRecords().filter(record=>record.group===groupSelect.value);
+  const pickedRecord=()=>groupRecords().find(record=>record.period===periodSelect.value);
+  const pickedStudent=()=>pickedRecord()?.students.find(student=>student.name===pupilSelect.value&&pupilSelect.value);
+  function showCurrent(){
+    const old=pickedStudent()?.grades[subjectSelect.value];
+    current.textContent=validGrade(old)?'Nota actual '+fmtValue(old):'Selecciona un alumno y una materia con nota.';
+    save.disabled=!validGrade(old);
+    grade.value='';agreement.checked=false;feedback.textContent='';
+  }
+  function subjects(){
+    const student=pickedStudent();
+    options(subjectSelect,distinct(Object.keys(student?.grades||{}).filter(subject=>key(subject).includes(key(subjectSearch.value)))),subjectSelect.value,'Selecciona la materia');
+    showCurrent();
+  }
+  function pupils(){
+    const record=pickedRecord();
+    const names=record?.students.map(student=>student.name)||[];
+    const counts=new Map();
+    for(const name of names)counts.set(name,(counts.get(name)||0)+1);
+    const matches=names.filter(name=>counts.get(name)===1&&key(name).includes(key(pupilSearch.value)));
+    options(pupilSelect,distinct(matches),pupilSelect.value,'Selecciona al alumno');
+    subjectSearch.value='';subjects();
+  }
+  function evaluations(preferred){
+    options(periodSelect,periods.filter(term=>groupRecords().some(record=>record.period===term)),preferred,'Selecciona la evaluación');
+    pupilSearch.value='';pupils();
+  }
+  function groups(preferred,term){
+    options(groupSelect,distinct(courseRecords().map(record=>record.group)),preferred);
+    evaluations(term);
+  }
+  options(courseSelect,distinct(available.map(record=>record.course)),course);
+  groups(group,period);
+  courseSelect.onchange=()=>groups(groupSelect.value,periodSelect.value);
+  groupSelect.onchange=()=>evaluations(periodSelect.value);
+  periodSelect.onchange=()=>evaluations(periodSelect.value);
+  pupilSearch.oninput=pupils;
+  pupilSelect.onchange=()=>{subjectSearch.value='';subjects();};
+  subjectSearch.oninput=subjects;
+  subjectSelect.onchange=showCurrent;
+  dialog.addEventListener('close',()=>{dialog.remove();if(trigger.isConnected)trigger.focus();},{once:true});
+  form.onsubmit=event=>{
+    event.preventDefault();
+    feedback.textContent='';
+    const record=pickedRecord(),student=pickedStudent(),subject=subjectSelect.value;
+    const input=grade.value.trim();
+    const value=/^(?:\d{1,2})(?:[.,]\d+)?$/.test(input)?Number(input.replace(',','.')):NaN;
+    if(!record||!student||!subject||!agreement.checked||!validGrade(value)){
+      feedback.textContent='Completa la selección, indica una nota de 0 a 10 y confirma el acuerdo.';return;
+    }
+    const prior=student.grades[subject];
+    if(!validGrade(prior)||prior===value){
+      feedback.textContent='Indica una nota distinta de la actual.';return;
+    }
+    const raw=state.records.find(item=>recordKey(item)===recordKey(record));
+    const original=consolidateSubjects(raw).students.find(item=>item.name===student.name)?.grades[subject];
+    const history=state.gradeChanges||[];
+    const existing=evaluationChanges(record).find(item=>item.student===student.name&&item.subject===subject);
+    const change={id:crypto.randomUUID(),record:recordKey(record),student:student.name,subject,prior,value,
+      original:existing?.original??original,at:new Date().toISOString()};
+    try {persist(state.records,state.notes,state.actas,[...history,change]);}
+    catch(error){feedback.textContent='No se ha podido guardar el cambio. '+error.message;return;}
+    dialog.close();
+    $('course').value=record.course;
+    setOptions('group',distinct(state.records.filter(item=>item.year===year&&item.course===record.course).map(item=>item.group)));
+    $('group').value=record.group;
+    activeActaPeriod=record.period;
+    refreshFilters();
+    message('Cambio guardado. El acta y los resultados se han actualizado.');
+  };
+  document.body.append(dialog);
+  dialog.showModal();
+}
 function showActa(records) {
   const content=$('content');
   content.replaceChildren();
@@ -596,12 +745,14 @@ function showActa(records) {
   const summaries=Object.fromEntries(periods.map(period=>[period,ActaModel.summarize(records.find(item=>item.period===period))]));
   const pages=periods.map(period=>{
     const summary=summaries[period];
+    const record=records.find(item=>item.period===period);
+    const changes=record?evaluationChanges(record):[];
     const interpretation=ActaModel.interpretation(summary);
     const draftKey=actaDraftKey(year,course,group,period);
     const draft=state.actas?.[draftKey] || {};
     const notesBySection={2:interpretation.global,3:summary?.failures.length?[]:[
       summary?.evaluated?'No se registran insuficientes en las notas válidas.':'Faltan calificaciones para completar la relación.'
-    ],5:interpretation.observations,7:interpretation.measures};
+    ],5:interpretation.observations,7:[...changes.map(change=>gradeChangeLine(change,course,group,period)),...interpretation.measures]};
     const sections=Object.entries(ActaModel.sections).map(([number,title])=>({
       number:Number(number),title,lines:notesBySection[number]||[],note:draft[number]||'',editable:number!=='3'
     }));
@@ -617,7 +768,9 @@ function showActa(records) {
   wordButton.onclick=()=>run(()=>ActaExport.word(data));
   const pdfButton=element('button','Descargar PDF · '+page.label,'primary');
   pdfButton.onclick=()=>run(()=>ActaExport.pdf(data,page));
-  actions.append(pdfButton,wordButton);
+  const changeButton=element('button','Cambios de nota +');
+  changeButton.onclick=()=>openGradeChange(year,course,group,page.period,changeButton);
+  actions.append(changeButton,pdfButton,wordButton);
   const tabs=element('div',undefined,'filters acta-tabs');
   tabs.setAttribute('role','group');
   tabs.setAttribute('aria-label','Páginas del acta');

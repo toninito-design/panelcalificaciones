@@ -323,7 +323,10 @@ function showGradesTable(records) {
       const stats=pupilStats.get(row).get(period);
       const value=group.metric ? (stats.n?stats[group.metric]:null) : row.terms.get(period)?.[group.subject]??null;
       const cell=element('td',fmtValue(value),i===0?'matrix-start':'');
-      if (group.subject!==undefined && value!==null && value<5) cell.classList.add('grade-insufficient');
+      if (group.subject!==undefined && value!==null) {
+        cell.classList.add(value<5?'grade-insufficient':'grade-pass');
+        if (value>=5) cell.dataset.gradeBand=String(Math.floor(value));
+      }
       tr.append(cell);
     });
     body.append(tr);

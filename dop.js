@@ -603,7 +603,147 @@ const dopDashboard = (() => {
       parent.append(details);
     }
   }
-  const names={map:'Centro de un vistazo',subject:'Seguimiento por materia',groups:'Comparación de cursos y grupos',history:'Transiciones e histórico',alarms:'Alarmas rojas'};
+  const meanChoice={period:'all',group:'AB',scope:'courses'};
+  const meanPeriods={'1EV':'1.º trimestre','2EV':'2.º trimestre','3EV':'3.º trimestre',FINAL:'Final'};
+  const meanColors={'1EV':'#256895','2EV':'#42704a','3EV':'#875400',FINAL:'#8f122c'};
+  const meanGroups={A:'Grupo A',B:'Grupo B',AB:'Grupos A + B'};
+  const meanScopes={courses:'Por curso',stages:'Por etapa',center:'Todo el centro'};
+  const shortCourse=course=>course.replace('Primaria','Prim.').replace('Bachillerato','Bach.');
+  function meanRows(records,group,scope,selected) {
+    const letters=group==='AB'?['A','B']:[group];
+    const filtered=records.filter(record=>letters.includes(record.group.trim().toUpperCase()));
+    const units=scope==='courses'?planned.map(({course})=>[course,course]):scope==='stages'?stages.map(stage=>[stage,stage]):[['Todo el centro','']];
+    return units.map(([name,id])=>{
+      const unit=filtered.filter(record=>scope==='courses'?record.course===id:scope==='stages'?stageOf(record.course)===id:stageOf(record.course)!=='Otros');
+      const cells=selected.map(period=>{
+        const included=forPeriod(unit,period);
+        const stats=itemStats(included,'');
+        const loaded=distinct(included.filter(record=>itemStats([record],'').n).map(record=>record.group.trim().toUpperCase()));
+        const known=coverage(unit,included);
+        return {stats,loaded,partial:stats.n>0&&(loaded.length<letters.length||known.missing.length>0)};
+      });
+      return {name,cells};
+    });
+  }
+  function meanCanvas(width,height) {
+    const canvas=element('canvas');
+    canvas.width=width*2;canvas.height=height*2;
+    const ctx=canvas.getContext('2d');
+    ctx.scale(2,2);
+    ctx.fillStyle='#fff';ctx.fillRect(0,0,width,height);
+    return {canvas,ctx};
+  }
+  function downloadMeans(canvas,filename) {
+    canvas.toBlob(blob=>{
+      if(!blob){message('No se ha podido crear la imagen.',true);return;}
+      const url=URL.createObjectURL(blob);
+      const link=element('a');
+      link.href=url;link.download=filename;link.click();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+    },'image/png');
+  }
+  function meanImageTitle(ctx,title,context) {
+    ctx.fillStyle='#8f122c';ctx.font='bold 23px sans-serif';ctx.fillText(title,26,34);
+    ctx.fillStyle='#3b3034';ctx.font='15px sans-serif';ctx.fillText(context,26,59);
+  }
+  const meanValue=({stats,partial})=>stats.n?fmtValue(stats.mean)+(partial?'*':''):'—';
+  const meanCount=({stats})=>stats.n?' · '+stats.n+' notas':'';
+  function meansTableImage(rows,selected,context) {
+    const width=Math.max(620,248+selected.length*182), top=111, rowHeight=34;
+    const {canvas,ctx}=meanCanvas(width,top+rows.length*rowHeight+65);
+    meanImageTitle(ctx,'Tabla de medias',context);
+    ctx.fillStyle='#f5e4ea';ctx.fillRect(20,80,width-40,31);
+    ctx.fillStyle='#26191e';ctx.font='bold 15px sans-serif';
+    ctx.fillText('Curso / ámbito',28,101);
+    selected.forEach((period,i)=>ctx.fillText(meanPeriods[period],248+i*182,101));
+    rows.forEach(({name,cells},index)=>{
+      const y=top+index*rowHeight;
+      ctx.fillStyle=index%2?'#fbf5f7':'#fff';ctx.fillRect(20,y,width-40,rowHeight);
+      ctx.fillStyle='#26191e';ctx.font='15px sans-serif';ctx.fillText(name,28,y+22);
+      cells.forEach((cell,i)=>ctx.fillText(meanValue(cell)+meanCount(cell),248+i*182,y+22));
+    });
+    ctx.font='13px sans-serif';ctx.fillStyle='#59474d';
+    ctx.fillText('— Sin notas válidas.  * Cobertura parcial de los grupos seleccionados.',26,top+rows.length*rowHeight+30);
+    return canvas;
+  }
+  function meansChart(rows,selected,context) {
+    const width=Math.max(650,rows.length*85+75), height=410;
+    const {canvas,ctx}=meanCanvas(width,height);
+    meanImageTitle(ctx,'Medias por '+(meanChoice.scope==='courses'?'curso':meanChoice.scope==='stages'?'etapa':'centro'),context);
+    const top=115,bottom=325,left=53,right=width-26;
+    const x=index=>rows.length===1?(left+right)/2:left+(right-left)*(index+.5)/rows.length;
+    const y=value=>bottom-(bottom-top)*value/10;
+    ctx.lineWidth=1;
+    for(const tick of [0,2,4,6,8,10]){
+      ctx.strokeStyle='#e3d8dc';ctx.beginPath();ctx.moveTo(left,y(tick));ctx.lineTo(right,y(tick));ctx.stroke();
+      ctx.fillStyle='#57454b';ctx.font='13px sans-serif';ctx.textAlign='right';ctx.fillText(String(tick),left-9,y(tick)+4);
+    }
+    ctx.textAlign='center';
+    rows.forEach(({name},index)=>{
+      ctx.fillStyle='#26191e';ctx.font='12px sans-serif';ctx.fillText(shortCourse(name),x(index),348);
+    });
+    ctx.textAlign='left';
+    selected.forEach((period,column)=>{
+      const color=meanColors[period];
+      ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2.5;
+      ctx.beginPath();
+      let previous=false;
+      rows.forEach(({cells},index)=>{
+        const {stats}=cells[column];
+        if(!stats.n){previous=false;return;}
+        if(previous)ctx.lineTo(x(index),y(stats.mean));
+        else ctx.moveTo(x(index),y(stats.mean));
+        previous=true;
+      });
+      ctx.stroke();
+      rows.forEach(({cells},index)=>{
+        const {stats,partial}=cells[column];
+        if(!stats.n)return;
+        ctx.beginPath();ctx.arc(x(index),y(stats.mean),4,0,2*Math.PI);
+        if(partial){ctx.fillStyle='#fff';ctx.fill();ctx.stroke();}
+        else{ctx.fillStyle=color;ctx.fill();}
+      });
+      const legendX=26+column*145;
+      ctx.fillStyle=color;ctx.fillRect(legendX,83,16,4);
+      ctx.font='14px sans-serif';ctx.fillText(meanPeriods[period],legendX+23,90);
+    });
+    if(!rows.some(({cells})=>cells.some(({stats})=>stats.n))){
+      ctx.fillStyle='#57454b';ctx.textAlign='center';ctx.font='16px sans-serif';
+      ctx.fillText('Sin notas válidas para esta selección',width/2,220);
+      ctx.textAlign='left';
+    }
+    ctx.fillStyle='#59474d';ctx.font='13px sans-serif';
+    ctx.fillText('Punto hueco: cobertura parcial. Los huecos indican que faltan notas válidas.',26,385);
+    canvas.setAttribute('role','img');
+    canvas.setAttribute('aria-label','Gráfica lineal de medias. Los valores exactos están en la tabla anterior.');
+    return canvas;
+  }
+  function meansView(parent,records,year,rerender) {
+    const controls=element('div',undefined,'filters');
+    const pick=(field,label,options)=>listOptions(controls,label,options,meanChoice[field],value=>{meanChoice[field]=value;rerender();});
+    pick('period','Evaluación',[['all','Todas las evaluaciones'],...Object.entries(meanPeriods)]);
+    pick('group','Grupos',Object.entries(meanGroups));
+    pick('scope','Ver medias',Object.entries(meanScopes));
+    const selected=meanChoice.period==='all'?periods:[meanChoice.period];
+    const rows=meanRows(records,meanChoice.group,meanChoice.scope,selected);
+    const context=[year||'Sin año importado',meanGroups[meanChoice.group],meanChoice.period==='all'?'Todas las evaluaciones':meanPeriods[meanChoice.period]].join(' · ');
+    const fileSuffix=[year||'sin-ano',meanChoice.group.toLowerCase(),meanChoice.period.toLowerCase(),meanChoice.scope].join('-');
+    parent.append(element('h3','Medias de calificaciones'),controls,element('p',context,'muted'));
+    table(parent,'', [meanChoice.scope==='courses'?'Curso':'Ámbito',...selected.map(period=>meanPeriods[period])],
+      rows.map(({name,cells})=>[name,...cells.map(cell=>meanValue(cell)+meanCount(cell))]));
+    parent.append(element('p','Cada media se calcula con todas las calificaciones válidas. — Sin datos. * Cobertura parcial de los grupos seleccionados.','muted'));
+    const tableButton=element('button','Descargar tabla (PNG)');
+    tableButton.onclick=()=>downloadMeans(meansTableImage(rows,selected,context),'medias-tabla-'+fileSuffix+'.png');
+    parent.append(tableButton,element('h3','Gráfica lineal'));
+    const chart=meansChart(rows,selected,context);
+    const scroll=element('div',undefined,'scroll dop-means-chart');
+    scroll.tabIndex=0;scroll.setAttribute('aria-label','Gráfica de medias con desplazamiento horizontal');
+    scroll.append(chart);parent.append(scroll);
+    const chartButton=element('button','Descargar gráfica (PNG)');
+    chartButton.onclick=()=>downloadMeans(chart,'medias-grafica-'+fileSuffix+'.png');
+    parent.append(chartButton);
+  }
+  const names={map:'Centro de un vistazo',subject:'Seguimiento por materia',groups:'Comparación de cursos y grupos',history:'Transiciones e histórico',means:'Medias',alarms:'Alarmas rojas'};
   return function showDop(records,year,openStudent) {
     const parent=$('content');
     const history=records.map(record=>({...record,originalCourse:record.course,course:canonicalCourse(record.course)}));
@@ -629,6 +769,7 @@ const dopDashboard = (() => {
         tabs.append(button);
       }
       parent.append(tabs);
+      if(choice.view==='means'){meansView(parent,normalized,year,render);return;}
       if(choice.view==='alarms'){alarmView(parent,alarms,normalized,year,render,openStudent);return;}
       if(!history.length){parent.append(element('p','Importa las evaluaciones de un año académico para consultar el centro.'));return;}
       if(choice.view==='history'){historyView(parent,history,year,render);return;}

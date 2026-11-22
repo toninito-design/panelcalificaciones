@@ -41,3 +41,6 @@
 .dop-alarm { border-inline-start: .25rem solid #a3172b; background: #fff; margin-block: .7rem; padding: .7rem 1rem; }
 .dop-alarm p { margin-block: .4rem; }
 .dop-alarm-status { margin-inline-start: .6rem; font-size: .875rem; color: #8f122c; }
+
+.dop-means-chart { margin-block: .6rem 1rem; border: 1px solid var(--line); border-radius: 8px; }
+.dop-means-chart canvas { display: block; width: 100%; min-width: 640px; height: auto; }
